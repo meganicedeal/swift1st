@@ -7,6 +7,16 @@
 
 import UIKit
 
+// THEORY: this file is the clearest example of the delegate pattern in the
+// whole project — read it alongside RouteInfoPanel's delegate below, they
+// follow the identical shape on purpose, so once you understand one you
+// understand both.
+//
+// A `protocol` is just a list of method signatures with no implementation —
+// a *contract*. It says "any type that conforms to UICoordinatePanelDelegate
+// promises to have a coordinatePanelButtonTapped(_:) method", without
+// caring at all what that type actually is (a ViewController here, but it
+// could be anything).
 
 protocol UICoordinatePanelDelegate {
     // 1: Define the protocol name and methods (function signatures)
@@ -17,6 +27,14 @@ protocol UICoordinatePanelDelegate {
     
 }
 
+// A `protocol extension` can supply a DEFAULT implementation for a method
+// declared in the protocol. Here the default does nothing ("no code").
+// The practical effect: whoever adopts UICoordinatePanelDelegate is no
+// longer *required* to implement coordinatePanelButtonTapped(_:) — if they
+// don't, this empty version quietly runs instead. This is how you turn a
+// strict protocol into something that behaves like an "optional" delegate
+// method (a trick Swift needs because, unlike Objective-C, protocols don't
+// have a built-in `@optional` for pure-Swift protocols).
 extension UICoordinatePanelDelegate {
     // 4. We are turning this protocol into a delegate, meaning that
     // those functions are now not mandatory to be implemented by
@@ -72,6 +90,15 @@ class UICoordinatePanel: UIView {
     
     // We need setters for Longitude and Latitude...
     // Using didSet
+    //
+    // THEORY: `didSet` is a PROPERTY OBSERVER. Instead of writing a manual
+    // setter that both stores the value AND updates the label, you let
+    // Swift store the value automatically and just react *after* it
+    // changes. This means anywhere in the codebase you can simply write
+    // `coordinatePanel.latitude = 45.5` and the label updates itself —
+    // the caller doesn't need to remember to also update the UI. Compare
+    // this to UIRouteInfoPanel's `distanceText`/`durationText`, which use
+    // the exact same pattern.
     public var latitude : Double = 0 {
         didSet{
             self.lblLatitude.text = String(format: "%.6f", latitude)

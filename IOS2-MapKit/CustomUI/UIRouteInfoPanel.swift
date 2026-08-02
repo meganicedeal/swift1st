@@ -7,6 +7,14 @@
 //  button to clear the current route. Mirrors the style/pattern already
 //  established by UICoordinatePanel.
 //
+//  This file deliberately reuses the exact same shape as UICoordinatePanel:
+//  a protocol + a default-implementation extension (delegate pattern), and
+//  `didSet` property observers on distanceText/durationText. See the
+//  detailed comments in UICoordinatePanel.swift — once you understand that
+//  file, this one is the same pattern applied to a second, unrelated piece
+//  of UI. Recognizing "I've seen this shape before" is a big part of
+//  reading unfamiliar Swift/iOS code productively.
+//
 
 import UIKit
 

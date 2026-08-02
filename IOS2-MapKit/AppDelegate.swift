@@ -7,6 +7,15 @@
 
 import UIKit
 
+// THEORY: how does an iOS app even start?
+// `@main` marks the entry point of the whole program — the equivalent of
+// `func main()` in other languages. When the app launches, iOS creates
+// exactly one AppDelegate and calls its lifecycle methods below in order.
+// AppDelegate handles app-wide events (launch, background/foreground
+// transitions across the WHOLE app). Since iOS 13, each individual window/
+// screen's lifecycle is handled by a separate SceneDelegate (see
+// SceneDelegate.swift) — that split exists to support multiple windows on
+// iPad, even though this project only ever has one.
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
 

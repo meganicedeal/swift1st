@@ -58,6 +58,14 @@ up by hand in Interface Builder.
 - A physical device or simulator with a simulated location, since the app
   needs a location fix to center the map and calculate routes
 
+## Learning Swift from this project
+
+If you're using this project to learn Swift/iOS, see
+[`LEARNING.md`](LEARNING.md) — a from-scratch walkthrough of every concept
+used here (optionals, the delegate pattern, closures, error handling,
+programmatic Auto Layout...), each one pointing at the exact commented
+lines of code that demonstrate it.
+
 ## Getting started
 
 1. Clone the repo and open `IOS2-MapKit.xcodeproj` in Xcode.
