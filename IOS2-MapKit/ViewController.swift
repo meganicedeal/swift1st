@@ -532,6 +532,55 @@ class ViewController: UIViewController {
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
     }
+
+    // MARK: - Look Around
+
+    /// Cere și afișează o scenă Look Around (echivalentul Apple pentru
+    /// Street View) pentru coordonata dată.
+    ///
+    /// TEORIE — `async`/`await` și `Task { ... }`:
+    /// `MKLookAroundSceneRequest.scene` este o proprietate `async`, adică
+    /// citirea ei poate dura (o cerere de rețea către serverele Apple
+    /// Maps) fără să blocheze thread-ul curent. Cod `async` poate fi
+    /// apelat doar din alt cod `async` — dar `lookAroundTapped` (mai sus)
+    /// e un simplu handler de buton, sincron. `Task { ... }` face
+    /// legătura: pornește o nouă sarcină asincronă, în care putem folosi
+    /// `await` liber, în timp ce restul aplicației continuă normal.
+    /// E, practic, alternativa modernă la closure-urile `@escaping`
+    /// folosite de RouteService (completion handlers) — ambele rezolvă
+    /// aceeași problemă ("fă ceva, apoi anunță-mă când e gata"), dar
+    /// sintaxa `async`/`await` se citește liniar, de sus în jos, în loc
+    /// de imbricată în closure-uri.
+    private func showLookAround(for coordinate: CLLocationCoordinate2D) {
+        Task {
+            do {
+                let request = MKLookAroundSceneRequest(coordinate: coordinate)
+                guard let scene = try await request.scene else {
+                    presentLookAroundUnavailable()
+                    return
+                }
+
+                let lookAroundController = MKLookAroundViewController(scene: scene)
+                present(lookAroundController, animated: true)
+            } catch {
+                presentError(error)
+            }
+        }
+    }
+
+    /// Nu toate locurile au acoperire Look Around (Apple nu a fotografiat
+    /// peste tot) — `request.scene` întoarce pur și simplu `nil` în acest
+    /// caz, nu o eroare, așa că merită un mesaj dedicat, mai prietenos
+    /// decât un "Oops" generic.
+    private func presentLookAroundUnavailable() {
+        let alert = UIAlertController(
+            title: "Indisponibil",
+            message: "Look Around nu are imagini pentru această destinație.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
 }
 
 // MARK: - Delegation, explained
@@ -636,6 +685,11 @@ extension ViewController: UIRouteInfoPanelDelegate {
         )
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
+    }
+
+    func routeInfoPanelLookAroundButtonTapped(_ sender: Any?) {
+        guard let destination = currentDestination else { return }
+        showLookAround(for: destination.placemark.coordinate)
     }
 }
 

@@ -478,3 +478,30 @@ hărții (zi sau noapte).
   `ViewController`, care reaplică aspectul hărții și, dacă o rută e deja
   afișată, recalculează imediat textul de distanță/durată cu noua
   unitate — altfel ar rămâne cu valoarea veche până la următoarea mișcare.
+
+## 15. Look Around la destinație
+
+A șasea funcționalitate: un buton (binoclu) pe panoul de rută care
+deschide o previzualizare **Look Around** — echivalentul Apple pentru
+Street View — la destinația curentă.
+
+**Cum funcționează:**
+
+1. `MKLookAroundSceneRequest(coordinate:)` cere de la serverele Apple
+   Maps o "scenă" Look Around pentru coordonatele destinației.
+2. Proprietatea `.scene` a cererii este `async` — se citește cu `await`,
+   dintr-un `Task { ... }` pornit din handler-ul (sincron) al butonului.
+   E alternativa modernă la closure-urile `@escaping` folosite deja de
+   `RouteService`: rezolvă aceeași problemă ("fă ceva asincron, apoi
+   anunță-mă"), dar codul se citește liniar, nu imbricat.
+3. Dacă există o scenă, se prezintă direct într-un
+   `MKLookAroundViewController` — un ecran complet oferit de MapKit,
+   fără nicio interfață proprie de construit.
+4. Nu toate locurile au acoperire Look Around; în acest caz `.scene`
+   întoarce `nil` (nu o eroare), tratat separat cu un mesaj dedicat.
+
+Spre deosebire de celelalte funcționalități, aceasta a fost aleasă
+special pentru că rămâne complet în targetul principal al aplicației —
+nu necesită un target nou de extensie (cum ar fi cerut un widget sau un
+Live Activity) și nici o aprobare specială de la Apple (cum ar cere
+CarPlay).

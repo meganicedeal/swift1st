@@ -21,6 +21,7 @@ import UIKit
 protocol UIRouteInfoPanelDelegate {
     func routeInfoPanelClearButtonTapped(_ sender: Any?)
     func routeInfoPanelSaveButtonTapped(_ sender: Any?)
+    func routeInfoPanelLookAroundButtonTapped(_ sender: Any?)
 }
 
 extension UIRouteInfoPanelDelegate {
@@ -28,6 +29,7 @@ extension UIRouteInfoPanelDelegate {
     // so conforming types only need to implement what they care about.
     func routeInfoPanelClearButtonTapped(_ sender: Any?) {}
     func routeInfoPanelSaveButtonTapped(_ sender: Any?) {}
+    func routeInfoPanelLookAroundButtonTapped(_ sender: Any?) {}
 }
 
 class UIRouteInfoPanel: UIView {
@@ -66,6 +68,16 @@ class UIRouteInfoPanel: UIView {
         return btn
     }()
 
+    // Buton pentru previzualizarea Look Around (echivalentul Apple pentru
+    // Street View) la destinație — vezi showLookAround(for:) în
+    // ViewController.swift.
+    private var btnLookAround: UIButton = {
+        let btn = UIButton(type: .system)
+        btn.setImage(UIImage(systemName: "binoculars"), for: .normal)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        return btn
+    }()
+
     public var distanceText: String = "--" {
         didSet { lblDistance.text = distanceText }
     }
@@ -89,9 +101,10 @@ class UIRouteInfoPanel: UIView {
         layer.cornerRadius = 14
         clipsToBounds = true
 
-        addSubviews(lblDistance, lblDuration, btnClear, btnSave)
+        addSubviews(lblDistance, lblDuration, btnClear, btnSave, btnLookAround)
         btnClear.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
         btnSave.addTarget(self, action: #selector(saveTapped), for: .touchUpInside)
+        btnLookAround.addTarget(self, action: #selector(lookAroundTapped), for: .touchUpInside)
 
         applyConstraints()
     }
@@ -102,6 +115,10 @@ class UIRouteInfoPanel: UIView {
 
     @objc private func saveTapped() {
         delegate?.routeInfoPanelSaveButtonTapped(self)
+    }
+
+    @objc private func lookAroundTapped() {
+        delegate?.routeInfoPanelLookAroundButtonTapped(self)
     }
 
     private func applyConstraints() {
@@ -117,5 +134,8 @@ class UIRouteInfoPanel: UIView {
 
         btnSave.trailingAnchor.constraint(equalTo: btnClear.leadingAnchor, constant: -16).isActive = true
         btnSave.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
+
+        btnLookAround.trailingAnchor.constraint(equalTo: btnSave.leadingAnchor, constant: -16).isActive = true
+        btnLookAround.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
     }
 }
