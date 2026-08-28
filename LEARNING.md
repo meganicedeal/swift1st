@@ -556,3 +556,41 @@ efortul:** `RouteService` (calculează în continuare o singură etapă,
 fără să știe nimic despre opriri multiple), `VoiceGuide`,
 `FavoritesService`, `UserPreferences` — niciunul dintre ele nu a trebuit
 atins pentru acest refactor.
+
+## 17. Identitate vizuală ("temă de cartograf")
+
+O trecere de polish vizual, fără nicio funcționalitate nouă: aplicația
+avea, până acum, culorile implicite iOS — alb, `.systemBlue`, text negru
+pe fiecare panou, fiecare fișier UI cu propriile valori hardcodate.
+
+**`AppTheme.swift`** centralizează acum întreaga identitate vizuală
+într-un singur loc, cu același principiu de izolare folosit peste tot în
+proiect (RouteService pentru MapKit, VoiceGuide pentru AVFoundation
+etc.) — de data asta pentru culori și tipografie:
+
+- **Ink Navy** (`AppTheme.primary`) — accentul principal: ruta desenată
+  pe hartă, pinul destinației finale, butonul Look Around.
+- **Compass Teal** (`AppTheme.secondary`) — accent secundar: pinii
+  opririlor intermediare, butonul de salvare la favorite.
+- **Parchment** (`AppTheme.panelBackground`) — fundal cald pentru toate
+  panourile plutitoare, în loc de alb rece de sistem.
+- **SF Rounded** (`AppTheme.roundedFont`) — folosit pentru cifra mare de
+  distanță din `UIRouteInfoPanel`, ca un afișaj de bord; e o variantă
+  rotunjită a fontului de sistem, oferită gratuit de iOS prin
+  `UIFontDescriptor.withDesign(.rounded)` — fără să fie nevoie de niciun
+  font extern adăugat în proiect (ceea ce ar fi cerut modificarea
+  build-ului, cu riscurile discutate deja la widget/CarPlay).
+
+**Alte detalii de polish:**
+- `WaypointAnnotation` (subclasă `MKPointAnnotation`) reține dacă un pin
+  e destinația finală sau o oprire intermediară, ca `mapView(_:viewFor:)`
+  să le poată desena diferit — steag de sosire pentru destinație, număr
+  de ordine pentru opriri.
+- Coordonatele din `UICoordinatePanel` folosesc un font cu lățime fixă a
+  cifrelor (`monospacedDigitSystemFont`), ca zecimalele să nu "sară"
+  stânga-dreapta la fiecare actualizare de poziție.
+- Panoul de coordonate a primit margini laterale, ca să devină un card
+  plutitor, la fel ca celelalte panouri, în loc să se întindă edge-to-edge.
+- Textele rămase în engleză ("Search for a destination", "Oops",
+  "Latitude"/"Longitude") au fost traduse, pentru consecvență cu restul
+  interfeței.

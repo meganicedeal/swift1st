@@ -56,8 +56,14 @@ class UICoordinatePanel: UIView {
         
         let lbl = UILabel()
         lbl.text = text
-        lbl.font = bold ? UIFont.boldSystemFont(ofSize: 16) : UIFont.systemFont(ofSize: 16)
-        lbl.textColor = .black
+        // Valorile (bold: true) sunt cifre — folosim un font cu lățime
+        // fixă a cifrelor (monospaced digit), ca zecimalele să rămână
+        // aliniate vizual când valoarea se schimbă, în loc să "sară"
+        // stânga-dreapta la fiecare actualizare de poziție.
+        lbl.font = bold
+            ? UIFont.monospacedDigitSystemFont(ofSize: 16, weight: .semibold)
+            : UIFont.systemFont(ofSize: 16)
+        lbl.textColor = bold ? AppTheme.textPrimary : AppTheme.textSecondary
         lbl.textAlignment = .left
         lbl.numberOfLines = 1
         
@@ -68,9 +74,9 @@ class UICoordinatePanel: UIView {
         
     }
     
-    private var lblLatitudeTitle : UILabel = UICoordinatePanel.defaultLabel(text: "Latitude")
+    private var lblLatitudeTitle : UILabel = UICoordinatePanel.defaultLabel(text: "Latitudine")
     
-    private var lblLongitudeTitle : UILabel = UICoordinatePanel.defaultLabel(text: "Longitude")
+    private var lblLongitudeTitle : UILabel = UICoordinatePanel.defaultLabel(text: "Longitudine")
     
     private var lblLatitude : UILabel = UICoordinatePanel.defaultLabel(text: "...", bold: true)
     
@@ -80,7 +86,7 @@ class UICoordinatePanel: UIView {
     private var imgPosition : UIImageView = {
         var img = UIImageView()
         img.image = UIImage(systemName: "target")
-        img.tintColor = .black
+        img.tintColor = AppTheme.primary
         
         // We will apply constraints programmatically
         img.translatesAutoresizingMaskIntoConstraints = false
@@ -130,7 +136,9 @@ class UICoordinatePanel: UIView {
         // So, by default, let's turn off self.translateAutoresizingMaskIntoContraints
         self.translatesAutoresizingMaskIntoConstraints = false
         
-        self.backgroundColor = .white.withAlphaComponent(0.7)
+        self.backgroundColor = AppTheme.panelBackground
+        self.layer.cornerRadius = AppTheme.cardCornerRadius
+        self.clipsToBounds = true
         
         
         self.addSubviews(lblLatitudeTitle, lblLongitudeTitle, lblLatitude, lblLongitude, imgPosition)

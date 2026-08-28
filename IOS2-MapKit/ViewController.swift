@@ -97,7 +97,8 @@ class ViewController: UIViewController {
     private let btnFavorites: UIButton = {
         let btn = UIButton(type: .system)
         btn.setImage(UIImage(systemName: "star.fill"), for: .normal)
-        btn.backgroundColor = .white.withAlphaComponent(0.9)
+        btn.tintColor = AppTheme.secondary
+        btn.backgroundColor = AppTheme.panelBackground
         btn.layer.cornerRadius = 8
         btn.translatesAutoresizingMaskIntoConstraints = false
         return btn
@@ -106,7 +107,8 @@ class ViewController: UIViewController {
     private let btnSettings: UIButton = {
         let btn = UIButton(type: .system)
         btn.setImage(UIImage(systemName: "gearshape.fill"), for: .normal)
-        btn.backgroundColor = .white.withAlphaComponent(0.9)
+        btn.tintColor = AppTheme.textSecondary
+        btn.backgroundColor = AppTheme.panelBackground
         btn.layer.cornerRadius = 8
         btn.translatesAutoresizingMaskIntoConstraints = false
         return btn
@@ -120,9 +122,10 @@ class ViewController: UIViewController {
     // closure; without it, `searchBar` would be a closure, not a UISearchBar.
     private let searchBar: UISearchBar = {
         let bar = UISearchBar()
-        bar.placeholder = "Search for a destination"
+        bar.placeholder = "Caută o destinație"
         bar.searchBarStyle = .minimal
-        bar.backgroundColor = .white.withAlphaComponent(0.9)
+        bar.backgroundColor = AppTheme.panelBackground
+        bar.tintColor = AppTheme.primary
         bar.translatesAutoresizingMaskIntoConstraints = false
         return bar
     }()
@@ -207,9 +210,9 @@ class ViewController: UIViewController {
         btnSettings.widthAnchor.constraint(equalToConstant: 44).isActive = true
         btnSettings.heightAnchor.constraint(equalToConstant: 36).isActive = true
 
-        coordinatePanel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor).isActive = true
+        coordinatePanel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8).isActive = true
         coordinatePanel.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 4).isActive = true
-        coordinatePanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor).isActive = true
+        coordinatePanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8).isActive = true
         coordinatePanel.heightAnchor.constraint(equalToConstant: 70).isActive = true
 
         routeInfoPanel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16).isActive = true
@@ -331,9 +334,11 @@ class ViewController: UIViewController {
         }
 
         for (index, waypoint) in waypoints.enumerated() {
-            let pin = MKPointAnnotation()
+            let pin = WaypointAnnotation()
             pin.coordinate = waypoint.placemark.coordinate
             let isFinalStop = index == waypoints.count - 1
+            pin.isFinalDestination = isFinalStop
+            pin.stopNumber = index + 1
             pin.title = waypoint.name ?? (isFinalStop ? "Destinație" : "Oprire \(index + 1)")
             mapView.addAnnotation(pin)
         }
@@ -674,7 +679,7 @@ class ViewController: UIViewController {
     }
 
     private func presentError(_ error: Error) {
-        let alert = UIAlertController(title: "Oops", message: error.localizedDescription, preferredStyle: .alert)
+        let alert = UIAlertController(title: "Eroare", message: error.localizedDescription, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
     }
@@ -797,9 +802,33 @@ extension ViewController: MKMapViewDelegate {
             return MKOverlayRenderer(overlay: overlay)
         }
         let renderer = MKPolylineRenderer(polyline: polyline)
-        renderer.strokeColor = .systemBlue
+        renderer.strokeColor = AppTheme.primary
         renderer.lineWidth = 5
         return renderer
+    }
+
+    /// Stilizează pinii opririlor: destinația finală primește accentul
+    /// principal și un glyph distinct (steag de sosire); opririle
+    /// intermediare primesc accentul secundar și numărul lor de ordine,
+    /// ca dintr-o privire pe hartă să se vadă imediat care e care.
+    func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        guard let waypointAnnotation = annotation as? WaypointAnnotation else { return nil }
+
+        let identifier = "WaypointPin"
+        let markerView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
+            ?? MKMarkerAnnotationView(annotation: waypointAnnotation, reuseIdentifier: identifier)
+        markerView.annotation = waypointAnnotation
+        markerView.canShowCallout = true
+
+        if waypointAnnotation.isFinalDestination {
+            markerView.markerTintColor = AppTheme.primary
+            markerView.glyphImage = UIImage(systemName: "flag.checkered")
+        } else {
+            markerView.markerTintColor = AppTheme.secondary
+            markerView.glyphText = "\(waypointAnnotation.stopNumber)"
+        }
+
+        return markerView
     }
 }
 
