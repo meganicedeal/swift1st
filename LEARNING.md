@@ -423,3 +423,27 @@ un drum care nu mai corespunde realității.
 Recalcularea reutilizează `showRoute(_:destination:)`, care oricum
 resetează toată starea de navigare (etape, coordonate, anunțuri vocale) —
 nu a fost nevoie de cod suplimentar pentru asta.
+
+## 13. Distanță rămasă și ETA live
+
+A patra funcționalitate: pe panoul de rută, distanța și timpul estimat nu
+mai sunt calculate o singură dată (când a fost afișată ruta), ci se
+actualizează continuu, pe măsură ce utilizatorul înaintează.
+
+**Cum funcționează:**
+
+1. La fiecare actualizare de poziție, `updateLiveProgress` calculează
+   distanța rămasă ca sumă între: (a) cât mai e de parcurs din etapa
+   curentă (distanța de la poziția live la finalul etapei) și (b) suma
+   distanțelor tuturor etapelor următoare (`step.distance`, oferit direct
+   de MapKit pentru fiecare etapă).
+2. Pentru ETA, se folosește viteza reală măsurată de GPS
+   (`CLLocation.speed`) când e disponibilă — de obicei devine fiabilă
+   după câteva citiri consecutive. Cât timp GPS-ul nu are încă o
+   estimare bună (`speed` negativ), se folosește viteza medie a rutei
+   originale (distanța totală / timpul estimat de MapKit) ca aproximare
+   rezonabilă.
+3. Rezultatul actualizează `routeInfoPanel.distanceText` și
+   `.durationText`, exact aceleași proprietăți cu `didSet` folosite deja
+   pentru afișarea inițială — nu a fost nevoie de nicio schimbare în
+   `UIRouteInfoPanel`.

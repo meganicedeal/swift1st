@@ -429,6 +429,53 @@ class ViewController: UIViewController {
         return MKMetersBetweenMapPoints(point, projected)
     }
 
+    // MARK: - ETA și distanță live
+
+    /// Actualizează panoul de rută cu distanța rămasă și ETA-ul curent,
+    /// recalculate din poziția live a utilizatorului — nu doar valorile
+    /// statice, calculate o singură dată când ruta a fost afișată.
+    private func updateLiveProgress(currentLocation: CLLocation) {
+        guard currentStepIndex < routeSteps.count else { return }
+
+        let currentStep = routeSteps[currentStepIndex]
+        let stepEndLocation = CLLocation(
+            latitude: stepEndCoordinate(currentStep).latitude,
+            longitude: stepEndCoordinate(currentStep).longitude
+        )
+
+        // Distanța rămasă = ce mai e de parcurs din etapa curentă (de la
+        // poziția live până la finalul ei) + suma distanțelor tuturor
+        // etapelor care urmează. `step.distance` e oferit direct de
+        // MKRoute.Step, în metri.
+        let distanceLeftInCurrentStep = currentLocation.distance(from: stepEndLocation)
+        let remainingStepsDistance = routeSteps[(currentStepIndex + 1)...]
+            .reduce(0) { $0 + $1.distance }
+        let totalRemainingDistance = distanceLeftInCurrentStep + remainingStepsDistance
+
+        let speed = currentSpeed(currentLocation: currentLocation)
+        let remainingSeconds = speed > 0 ? totalRemainingDistance / speed : 0
+
+        routeInfoPanel.distanceText = formattedDistance(totalRemainingDistance)
+        routeInfoPanel.durationText = "≈ " + formattedDuration(remainingSeconds)
+    }
+
+    /// Viteza folosită pentru estimarea ETA-ului, în metri/secundă.
+    ///
+    /// `CLLocation.speed` este viteza reală, măsurată de GPS — cea mai
+    /// bună sursă când e disponibilă. Dar GPS-ul are nevoie de câteva
+    /// citiri consecutive ca să o poată estima corect, iar până atunci
+    /// întoarce o valoare negativă (de obicei -1) ca semnal "nu știu
+    /// încă". În acel caz, ne întoarcem la viteza medie a rutei
+    /// originale (distanța totală / timpul estimat de MapKit) — mai puțin
+    /// precisă, dar mereu disponibilă.
+    private func currentSpeed(currentLocation: CLLocation) -> Double {
+        if currentLocation.speed > 0.5 {
+            return currentLocation.speed
+        }
+        guard let route = currentRoute, route.expectedTravelTime > 0 else { return 0 }
+        return route.distance / route.expectedTravelTime
+    }
+
     private func formattedDistance(_ meters: CLLocationDistance) -> String {
         let formatter = MKDistanceFormatter()
         formatter.unitStyle = .abbreviated
@@ -493,6 +540,7 @@ extension ViewController: CLLocationManagerDelegate {
             }
             if !isRecalculatingRoute {
                 checkProgressAlongRoute(currentLocation: location)
+                updateLiveProgress(currentLocation: location)
             }
         } else {
             // În afara navigării, comportamentul rămâne cel de dinainte:
