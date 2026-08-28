@@ -57,6 +57,17 @@ class ViewController: UIViewController {
     private let coordinatePanel = UICoordinatePanel()
     private let routeInfoPanel = UIRouteInfoPanel()
 
+    // Turn-by-turn voice guidance state.
+    // `routeSteps` holds each leg of the current route (e.g. "Turn right
+    // onto Main St"); `currentStepIndex` tracks which one we're currently
+    // walking/driving toward; `isNavigating` switches didUpdateLocations
+    // (below) from "one-shot fix, then stop" to "keep tracking and check
+    // progress against the route" while a route is active.
+    private let voiceGuide = VoiceGuide()
+    private var routeSteps: [MKRoute.Step] = []
+    private var currentStepIndex = 0
+    private var isNavigating = false
+
     // This is a "closure-based property initializer": the `{ ... }()` right
     // after the type is a closure that runs ONCE, immediately, to compute
     // the initial value. It's a common Swift pattern for configuring a view
@@ -186,6 +197,22 @@ class ViewController: UIViewController {
         routeInfoPanel.distanceText = formattedDistance(route.distance)
         routeInfoPanel.durationText = "≈ " + formattedDuration(route.expectedTravelTime)
         routeInfoPanel.isHidden = false
+
+        // `route.steps` is an ordered array of MKRoute.Step, one per
+        // maneuver (e.g. "Turn right onto Main St"). Some steps (usually
+        // the very first "Start" step) have an empty `instructions` string
+        // and only exist to mark the departure point, so we filter those
+        // out before handing them to the voice guide.
+        routeSteps = route.steps.filter { !$0.instructions.isEmpty }
+        currentStepIndex = 0
+        isNavigating = true
+
+        // We may have already stopped continuous location updates after
+        // the initial one-shot fix (see didUpdateLocations below); once a
+        // route is active we need a steady stream of updates to know when
+        // the user has reached the next turn.
+        locationManager.startUpdatingLocation()
+        announceCurrentStep()
     }
 
     private func clearRoute(keepAnnotations: Bool = true) {
@@ -197,6 +224,75 @@ class ViewController: UIViewController {
             mapView.removeAnnotations(mapView.annotations)
         }
         routeInfoPanel.isHidden = true
+
+        isNavigating = false
+        routeSteps = []
+        currentStepIndex = 0
+    }
+
+    // MARK: - Voice guidance
+
+    /// Speaks the instruction for the step we're currently heading toward.
+    /// If a step happens to carry an empty instruction (shouldn't happen
+    /// after the filter above, but cheap to guard against), we just skip
+    /// straight to the next one instead of speaking silence.
+    private func announceCurrentStep() {
+        guard currentStepIndex < routeSteps.count else { return }
+
+        let instruction = routeSteps[currentStepIndex].instructions
+        guard !instruction.isEmpty else {
+            advanceToNextStep()
+            return
+        }
+        voiceGuide.speak(instruction)
+    }
+
+    /// Moves to the next step, or announces arrival and stops navigating
+    /// once every step has been completed.
+    private func advanceToNextStep() {
+        currentStepIndex += 1
+
+        guard currentStepIndex < routeSteps.count else {
+            voiceGuide.speak("You have arrived at your destination.")
+            isNavigating = false
+            locationManager.stopUpdatingLocation()
+            return
+        }
+
+        announceCurrentStep()
+    }
+
+    /// Compares the user's live location against the end of the current
+    /// step's road segment. MKRoute.Step doesn't expose "end coordinate"
+    /// directly, so we read it out of the step's own polyline (the last
+    /// point on that mini-polyline is where the next maneuver happens).
+    private func checkProgressAlongRoute(currentLocation: CLLocation) {
+        guard currentStepIndex < routeSteps.count else { return }
+
+        let step = routeSteps[currentStepIndex]
+        let endLocation = CLLocation(
+            latitude: stepEndCoordinate(step).latitude,
+            longitude: stepEndCoordinate(step).longitude
+        )
+
+        // How close (in meters) the user needs to be to the end of a step
+        // before we consider it "reached" and move on to the next
+        // instruction. 30m gives a bit of GPS slack without announcing
+        // the turn too early.
+        let arrivalThreshold: CLLocationDistance = 30
+
+        if currentLocation.distance(from: endLocation) < arrivalThreshold {
+            advanceToNextStep()
+        }
+    }
+
+    private func stepEndCoordinate(_ step: MKRoute.Step) -> CLLocationCoordinate2D {
+        let pointCount = step.polyline.pointCount
+        guard pointCount > 0 else { return step.polyline.coordinate }
+
+        var coordinates = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: pointCount)
+        step.polyline.getCoordinates(&coordinates, range: NSRange(location: 0, length: pointCount))
+        return coordinates.last ?? step.polyline.coordinate
     }
 
     private func formattedDistance(_ meters: CLLocationDistance) -> String {
@@ -242,13 +338,23 @@ class ViewController: UIViewController {
 extension ViewController: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.first else { return }
-        locationManager.stopUpdatingLocation()
 
         currentCoordinate = location.coordinate
-        centerMap(on: currentCoordinate)
-
         coordinatePanel.latitude = currentCoordinate.latitude
         coordinatePanel.longitude = currentCoordinate.longitude
+
+        if isNavigating {
+            // While actively navigating we want a live, zoomed-in view
+            // that keeps following the user, plus a check on whether
+            // they've reached the next turn.
+            centerMap(on: currentCoordinate, latLongDelta: 0.003)
+            checkProgressAlongRoute(currentLocation: location)
+        } else {
+            // Outside of navigation this behaves like before: get one fix
+            // to place the user on the map, then stop to save battery.
+            locationManager.stopUpdatingLocation()
+            centerMap(on: currentCoordinate)
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
