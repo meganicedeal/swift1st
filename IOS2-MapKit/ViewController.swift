@@ -57,12 +57,13 @@ class ViewController: UIViewController {
     private let coordinatePanel = UICoordinatePanel()
     private let routeInfoPanel = UIRouteInfoPanel()
 
-    // Turn-by-turn voice guidance state.
-    // `routeSteps` holds each leg of the current route (e.g. "Turn right
-    // onto Main St"); `currentStepIndex` tracks which one we're currently
-    // walking/driving toward; `isNavigating` switches didUpdateLocations
-    // (below) from "one-shot fix, then stop" to "keep tracking and check
-    // progress against the route" while a route is active.
+    // Starea pentru ghidarea vocală turn-by-turn.
+    // `routeSteps` reține fiecare etapă a rutei curente (ex. "Virează
+    // dreapta pe Str. Republicii"); `currentStepIndex` ține evidența
+    // etapei spre care ne îndreptăm în acest moment; `isNavigating`
+    // schimbă comportamentul din didUpdateLocations (mai jos) din "o
+    // singură citire de poziție, apoi stop" în "urmărire continuă +
+    // verificare a progresului pe rută", cât timp o rută e activă.
     private let voiceGuide = VoiceGuide()
     private var routeSteps: [MKRoute.Step] = []
     private var currentStepIndex = 0
@@ -198,19 +199,20 @@ class ViewController: UIViewController {
         routeInfoPanel.durationText = "≈ " + formattedDuration(route.expectedTravelTime)
         routeInfoPanel.isHidden = false
 
-        // `route.steps` is an ordered array of MKRoute.Step, one per
-        // maneuver (e.g. "Turn right onto Main St"). Some steps (usually
-        // the very first "Start" step) have an empty `instructions` string
-        // and only exist to mark the departure point, so we filter those
-        // out before handing them to the voice guide.
+        // `route.steps` este un array ordonat de MKRoute.Step, câte unul
+        // pentru fiecare manevră (ex. "Virează dreapta pe Str.
+        // Republicii"). Unele etape (de obicei prima, "Start") au un
+        // `instructions` gol și există doar ca să marcheze punctul de
+        // plecare, așa că le filtrăm înainte să le dăm ghidului vocal.
         routeSteps = route.steps.filter { !$0.instructions.isEmpty }
         currentStepIndex = 0
         isNavigating = true
 
-        // We may have already stopped continuous location updates after
-        // the initial one-shot fix (see didUpdateLocations below); once a
-        // route is active we need a steady stream of updates to know when
-        // the user has reached the next turn.
+        // E posibil ca actualizările continue de poziție să fi fost deja
+        // oprite după prima citire (vezi didUpdateLocations mai jos); din
+        // momentul în care o rută devine activă, avem nevoie de un flux
+        // constant de poziții ca să știm când utilizatorul a ajuns la
+        // următorul viraj.
         locationManager.startUpdatingLocation()
         announceCurrentStep()
     }
@@ -230,12 +232,12 @@ class ViewController: UIViewController {
         currentStepIndex = 0
     }
 
-    // MARK: - Voice guidance
+    // MARK: - Ghidare vocală
 
-    /// Speaks the instruction for the step we're currently heading toward.
-    /// If a step happens to carry an empty instruction (shouldn't happen
-    /// after the filter above, but cheap to guard against), we just skip
-    /// straight to the next one instead of speaking silence.
+    /// Rostește instrucțiunea pentru etapa spre care ne îndreptăm acum.
+    /// Dacă o etapă ajunge totuși cu un `instructions` gol (nu ar trebui,
+    /// după filtrarea de mai sus, dar verificarea costă puțin), trecem
+    /// direct la următoarea în loc să "rostim" o tăcere.
     private func announceCurrentStep() {
         guard currentStepIndex < routeSteps.count else { return }
 
@@ -247,13 +249,13 @@ class ViewController: UIViewController {
         voiceGuide.speak(instruction)
     }
 
-    /// Moves to the next step, or announces arrival and stops navigating
-    /// once every step has been completed.
+    /// Trece la etapa următoare sau, dacă toate etapele au fost parcurse,
+    /// anunță sosirea la destinație și oprește navigarea.
     private func advanceToNextStep() {
         currentStepIndex += 1
 
         guard currentStepIndex < routeSteps.count else {
-            voiceGuide.speak("You have arrived at your destination.")
+            voiceGuide.speak("Ați ajuns la destinație.")
             isNavigating = false
             locationManager.stopUpdatingLocation()
             return
@@ -262,10 +264,11 @@ class ViewController: UIViewController {
         announceCurrentStep()
     }
 
-    /// Compares the user's live location against the end of the current
-    /// step's road segment. MKRoute.Step doesn't expose "end coordinate"
-    /// directly, so we read it out of the step's own polyline (the last
-    /// point on that mini-polyline is where the next maneuver happens).
+    /// Compară poziția curentă a utilizatorului cu finalul segmentului de
+    /// drum al etapei active. MKRoute.Step nu expune direct o "coordonată
+    /// de final", așa că o extragem din propriul polyline al etapei —
+    /// ultimul punct de pe acel mini-polyline e locul unde are loc
+    /// următoarea manevră.
     private func checkProgressAlongRoute(currentLocation: CLLocation) {
         guard currentStepIndex < routeSteps.count else { return }
 
@@ -275,10 +278,10 @@ class ViewController: UIViewController {
             longitude: stepEndCoordinate(step).longitude
         )
 
-        // How close (in meters) the user needs to be to the end of a step
-        // before we consider it "reached" and move on to the next
-        // instruction. 30m gives a bit of GPS slack without announcing
-        // the turn too early.
+        // Distanța (în metri) la care utilizatorul trebuie să ajungă față
+        // de finalul unei etape ca să considerăm că a "ajuns" la ea și
+        // trecem la instrucțiunea următoare. 30m lasă puțină marjă pentru
+        // imprecizia GPS, fără să anunțe virajul prea devreme.
         let arrivalThreshold: CLLocationDistance = 30
 
         if currentLocation.distance(from: endLocation) < arrivalThreshold {
@@ -344,14 +347,15 @@ extension ViewController: CLLocationManagerDelegate {
         coordinatePanel.longitude = currentCoordinate.longitude
 
         if isNavigating {
-            // While actively navigating we want a live, zoomed-in view
-            // that keeps following the user, plus a check on whether
-            // they've reached the next turn.
+            // Cât timp navigăm activ, vrem o vedere live, apropiată, care
+            // urmărește continuu poziția utilizatorului, plus o verificare
+            // a progresului față de următorul viraj.
             centerMap(on: currentCoordinate, latLongDelta: 0.003)
             checkProgressAlongRoute(currentLocation: location)
         } else {
-            // Outside of navigation this behaves like before: get one fix
-            // to place the user on the map, then stop to save battery.
+            // În afara navigării, comportamentul rămâne cel de dinainte:
+            // o singură citire de poziție ca să plasăm utilizatorul pe
+            // hartă, apoi oprim actualizările ca să economisim baterie.
             locationManager.stopUpdatingLocation()
             centerMap(on: currentCoordinate)
         }

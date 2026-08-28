@@ -339,3 +339,34 @@ to get from a tap to a line on a map.
   mock implementation instead of hitting the real network.
 - Persist recent searches with `UserDefaults` — a good next concept to
   learn once everything above feels comfortable.
+
+---
+
+## 10. Ghidare vocală turn-by-turn (adăugat ulterior)
+
+Peste structura de mai sus s-a adăugat o funcționalitate nouă: aplicația
+anunță acum, cu voce, fiecare instrucțiune de pe rută pe măsură ce
+utilizatorul se apropie de ea, exact ca într-o aplicație clasică de
+navigație.
+
+**Cum funcționează, pe scurt:**
+
+1. `VoiceGuide.swift` — o clasă mică, dedicată exclusiv sintezei vocale,
+   construită peste `AVSpeechSynthesizer`/`AVSpeechUtterance` din
+   AVFoundation. Ideea de bază pentru configurarea unei `utterance` (voce,
+   rată de vorbire) a pornit de la documentația Apple și de la tutorialul
+   AppCoda ["Language Detection and Text to Speech in SwiftUI
+   Apps"](https://medium.com/appcoda-tutorials/language-detection-and-text-to-speech-in-swiftui-apps-58e783e83db6),
+   care explică bine API-ul de bază.
+2. `ViewController.swift` a fost extins ca să rețină pașii rutei curente
+   (`route.steps`) și să urmărească poziția continuu (nu doar o singură
+   citire) cât timp o rută e activă.
+3. La fiecare actualizare de poziție, se verifică distanța până la
+   finalul etapei curente (`checkProgressAlongRoute`); sub un prag de 30m,
+   se trece la instrucțiunea următoare și se rostește cu voce tare.
+4. La ultima etapă, aplicația anunță sosirea la destinație și oprește
+   urmărirea continuă a poziției (ca să economisească baterie).
+
+Aceeași separare de responsabilități ca la `RouteService`: logica de
+"vorbit" stă izolată în `VoiceGuide`, iar `ViewController` decide doar
+*când* să apeleze `voiceGuide.speak(...)`.
