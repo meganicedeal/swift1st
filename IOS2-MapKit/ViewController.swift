@@ -94,6 +94,24 @@ class ViewController: UIViewController {
     private let favoritesService = FavoritesService()
     private var currentDestination: MKMapItem?
 
+    // Istoricul de căutări recente, afișat sub bara de căutare cât timp
+    // utilizatorul editează textul (înainte să apese Search).
+    private let searchHistoryStore = SearchHistoryStore()
+    private static let searchHistoryCellIdentifier = "RecentSearchCell"
+
+    private let searchHistoryTable: UITableView = {
+        let table = UITableView()
+        table.translatesAutoresizingMaskIntoConstraints = false
+        table.backgroundColor = AppTheme.panelBackground
+        table.layer.cornerRadius = AppTheme.cardCornerRadius
+        table.clipsToBounds = true
+        table.isHidden = true
+        table.separatorInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        return table
+    }()
+
+    private var searchHistoryHeightConstraint: NSLayoutConstraint!
+
     private let btnFavorites: UIButton = {
         let btn = UIButton(type: .system)
         btn.setImage(UIImage(systemName: "star.fill"), for: .normal)
@@ -160,8 +178,12 @@ class ViewController: UIViewController {
         mapView.delegate = self
         locationManager.delegate = self
 
-        mapView.addSubviews(searchBar, coordinatePanel, routeInfoPanel, btnFavorites, btnSettings)
+        mapView.addSubviews(searchBar, coordinatePanel, routeInfoPanel, btnFavorites, btnSettings, searchHistoryTable)
         routeInfoPanel.isHidden = true
+
+        searchHistoryTable.dataSource = self
+        searchHistoryTable.delegate = self
+        searchHistoryTable.register(UITableViewCell.self, forCellReuseIdentifier: Self.searchHistoryCellIdentifier)
 
         btnFavorites.addTarget(self, action: #selector(favoritesButtonTapped), for: .touchUpInside)
         btnSettings.addTarget(self, action: #selector(settingsButtonTapped), for: .touchUpInside)
@@ -214,6 +236,17 @@ class ViewController: UIViewController {
         coordinatePanel.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 4).isActive = true
         coordinatePanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8).isActive = true
         coordinatePanel.heightAnchor.constraint(equalToConstant: 70).isActive = true
+
+        // Istoricul de căutări apare exact în același loc ca panoul de
+        // coordonate, dar deasupra lui (a fost adăugat mai târziu în
+        // ierarhia de view-uri) — cât timp e vizibil, acoperă temporar
+        // coordonatele, la fel cum sugestiile de căutare acoperă
+        // conținutul din spate în majoritatea aplicațiilor.
+        searchHistoryTable.leadingAnchor.constraint(equalTo: coordinatePanel.leadingAnchor).isActive = true
+        searchHistoryTable.trailingAnchor.constraint(equalTo: coordinatePanel.trailingAnchor).isActive = true
+        searchHistoryTable.topAnchor.constraint(equalTo: coordinatePanel.topAnchor).isActive = true
+        searchHistoryHeightConstraint = searchHistoryTable.heightAnchor.constraint(equalToConstant: 0)
+        searchHistoryHeightConstraint.isActive = true
 
         routeInfoPanel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16).isActive = true
         routeInfoPanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16).isActive = true
@@ -905,11 +938,33 @@ extension ViewController: SettingsViewControllerDelegate {
 // MARK: - UISearchBarDelegate
 
 extension ViewController: UISearchBarDelegate {
+    func searchBarTextDidBeginEditing(_ searchBar: UISearchBar) {
+        searchBar.setShowsCancelButton(true, animated: true)
+        showSearchHistory()
+    }
+
+    func searchBarCancelButtonClicked(_ searchBar: UISearchBar) {
+        searchBar.text = ""
+        searchBar.resignFirstResponder()
+        searchBar.setShowsCancelButton(false, animated: true)
+        hideSearchHistory()
+    }
+
     func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
         searchBar.resignFirstResponder()
+        searchBar.setShowsCancelButton(false, animated: true)
+        hideSearchHistory()
 
         guard let query = searchBar.text, !query.isEmpty else { return }
+        performSearch(query)
+    }
 
+    /// Caută destinația și, dacă e găsită, o adaugă ca oprire nouă și
+    /// salvează termenul în istoric. Extrasă separat de
+    /// `searchBarSearchButtonClicked` ca să poată fi refolosită și când
+    /// utilizatorul atinge o căutare din istoric, nu doar când apasă
+    /// Search cu text tastat de mână.
+    private func performSearch(_ query: String) {
         let region = MKCoordinateRegion(
             center: currentCoordinate,
             span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
@@ -921,14 +976,77 @@ extension ViewController: UISearchBarDelegate {
                 switch result {
                 case .success(let items):
                     guard let destination = items.first else { return }
-                    // Fiecare căutare adaugă o oprire nouă la traseu, nu
-                    // înlocuiește ruta existentă — așa se construiește o
-                    // rută cu mai multe opriri, o căutare pe rând.
+                    self.searchHistoryStore.addSearch(query)
+                    self.searchBar.text = ""
                     self.addWaypoint(destination)
                 case .failure(let error):
                     self.presentError(error)
                 }
             }
+        }
+    }
+
+    private func showSearchHistory() {
+        let count = searchHistoryStore.recentSearches().count
+        guard count > 0 else { return }
+
+        searchHistoryTable.reloadData()
+        // +1 rând pentru opțiunea de ștergere a istoricului, afișată sub
+        // ultima căutare — vezi tableView(_:numberOfRowsInSection:).
+        searchHistoryHeightConstraint.constant = CGFloat(min(count, 5) + 1) * 44
+        searchHistoryTable.isHidden = false
+    }
+
+    private func hideSearchHistory() {
+        searchHistoryTable.isHidden = true
+    }
+}
+
+// MARK: - UITableViewDataSource, UITableViewDelegate (istoric căutări)
+
+extension ViewController: UITableViewDataSource, UITableViewDelegate {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        let count = min(searchHistoryStore.recentSearches().count, 5)
+        // +1 pentru rândul de ștergere a istoricului, mereu ultimul.
+        return count > 0 ? count + 1 : 0
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: Self.searchHistoryCellIdentifier, for: indexPath)
+        cell.backgroundColor = .clear
+
+        let searches = searchHistoryStore.recentSearches()
+        if indexPath.row < searches.count {
+            cell.textLabel?.text = searches[indexPath.row]
+            cell.textLabel?.textColor = AppTheme.textPrimary
+            cell.imageView?.image = UIImage(systemName: "clock")
+            cell.imageView?.tintColor = AppTheme.textSecondary
+        } else {
+            cell.textLabel?.text = "Șterge istoricul căutărilor"
+            cell.textLabel?.textColor = AppTheme.textSecondary
+            cell.imageView?.image = UIImage(systemName: "trash")
+            cell.imageView?.tintColor = AppTheme.textSecondary
+        }
+
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        44
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let searches = searchHistoryStore.recentSearches()
+
+        if indexPath.row < searches.count {
+            let query = searches[indexPath.row]
+            searchBar.resignFirstResponder()
+            searchBar.setShowsCancelButton(false, animated: true)
+            hideSearchHistory()
+            performSearch(query)
+        } else {
+            searchHistoryStore.clear()
+            hideSearchHistory()
         }
     }
 }

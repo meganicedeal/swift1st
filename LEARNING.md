@@ -594,3 +594,34 @@ etc.) — de data asta pentru culori și tipografie:
 - Textele rămase în engleză ("Search for a destination", "Oops",
   "Latitude"/"Longitude") au fost traduse, pentru consecvență cu restul
   interfeței.
+
+## 18. Istoric căutări recente
+
+A opta funcționalitate: aplicația reține ultimele căutări de destinații
+și le arată sub bara de căutare, ca sugestii, imediat ce utilizatorul
+atinge bara — înainte chiar să apese Search.
+
+**Cum funcționează:**
+
+1. `SearchHistoryStore.swift` — persistă un array de texte în
+   `UserDefaults`, cu deduplicare (o căutare repetată urcă în vârf, nu
+   creează un al doilea rând) și o limită de 10 intrări.
+2. `performSearch(_:)` — logica de căutare a fost extrasă separat de
+   `searchBarSearchButtonClicked`, ca să poată fi refolosită și atunci
+   când utilizatorul atinge o sugestie din istoric, nu doar când tastează
+   și apasă Search.
+3. Un `UITableView` (`searchHistoryTable`) apare exact în locul panoului
+   de coordonate, deasupra lui, cât timp bara de căutare e activă și
+   există istoric — la fel cum sugestiile de căutare acoperă temporar
+   conținutul din spate în majoritatea aplicațiilor. Ultimul rând e mereu
+   "Șterge istoricul căutărilor".
+4. `UISearchBarDelegate` a primit două metode noi:
+   `searchBarTextDidBeginEditing` (arată istoricul) și
+   `searchBarCancelButtonClicked` (ascunde tot și golește bara) —
+   `searchBar.setShowsCancelButton(true/false, animated:)` controlează
+   apariția butonului "Cancel" din dreapta barei, care nu e automată la
+   stilul `.minimal`.
+
+Ca și la rutele cu mai multe opriri, restul aplicației (ghidare vocală,
+recalculare, ETA) nu a trebuit atins deloc — istoricul e complet izolat
+în `SearchHistoryStore` și în fluxul de căutare din `ViewController`.
