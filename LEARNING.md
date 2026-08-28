@@ -396,3 +396,30 @@ iOS 15.2 la **iOS 17.0** — SwiftData nu există pe versiuni mai vechi.
   reconstruiește un `MKMapItem` din coordonatele salvate și reutilizează
   `drawRoute(to:)` — exact fluxul folosit deja pentru rezultatele din
   căutare.
+
+## 12. Recalculare automată a rutei la abatere
+
+A treia funcționalitate: dacă utilizatorul se abate de la traseul desenat
+(ratează un viraj, ia altă stradă), aplicația recalculează automat ruta de
+la poziția curentă către aceeași destinație, în loc să rămână blocată pe
+un drum care nu mai corespunde realității.
+
+**Cum funcționează:**
+
+1. La fiecare rută afișată, se rețin toate coordonatele traseului
+   (`routeCoordinates`), extrase din `route.polyline`.
+2. La fiecare actualizare de poziție, în timpul navigării, se calculează
+   distanța minimă de la poziția curentă până la cel mai apropiat punct de
+   pe traseu (`distanceToRoute`) — segment cu segment, prin proiecție
+   geometrică pe fiecare bucată a traseului, nu doar distanța până la cel
+   mai apropiat punct existent (ceea ce ar da rezultate imprecise pe
+   segmente lungi).
+3. Peste un prag de 50 de metri, se consideră că utilizatorul s-a abătut:
+   se anunță vocal "Recalculăm ruta." și se pornește o nouă cerere către
+   `RouteService`, de la poziția curentă către aceeași destinație.
+4. `isRecalculatingRoute` previne trimiterea mai multor cereri simultan,
+   cât timp una e deja în curs.
+
+Recalcularea reutilizează `showRoute(_:destination:)`, care oricum
+resetează toată starea de navigare (etape, coordonate, anunțuri vocale) —
+nu a fost nevoie de cod suplimentar pentru asta.

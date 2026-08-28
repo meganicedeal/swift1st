@@ -69,6 +69,15 @@ class ViewController: UIViewController {
     private var currentStepIndex = 0
     private var isNavigating = false
 
+    // Coordonatele complete ale rutei curente (nu doar etapele), folosite
+    // ca să detectăm dacă utilizatorul s-a abătut de la drum — vezi
+    // isOffRoute(_:) mai jos. `isRecalculatingRoute` previne trimiterea
+    // mai multor cereri de recalculare simultan, cât timp una e deja în
+    // desfășurare (MKDirections e asincron, iar poziția se actualizează
+    // des în timpul navigării).
+    private var routeCoordinates: [CLLocationCoordinate2D] = []
+    private var isRecalculatingRoute = false
+
     // Serviciul de favorite (SwiftData) și destinația curent afișată pe
     // hartă — reținută separat de `currentRoute`, ca să știm ce nume și
     // ce coordonate să salvăm atunci când utilizatorul apasă pe steaua
@@ -239,6 +248,11 @@ class ViewController: UIViewController {
         currentStepIndex = 0
         isNavigating = true
 
+        // Reținem întregul traseu ca listă de coordonate (nu doar etapele
+        // pentru voce), ca să putem verifica ulterior cât de departe s-a
+        // abătut utilizatorul de la drumul desenat pe hartă.
+        routeCoordinates = polylineCoordinates(route.polyline)
+
         // E posibil ca actualizările continue de poziție să fi fost deja
         // oprite după prima citire (vezi didUpdateLocations mai jos); din
         // momentul în care o rută devine activă, avem nevoie de un flux
@@ -262,6 +276,7 @@ class ViewController: UIViewController {
         routeSteps = []
         currentStepIndex = 0
         currentDestination = nil
+        routeCoordinates = []
     }
 
     // MARK: - Ghidare vocală
@@ -322,12 +337,96 @@ class ViewController: UIViewController {
     }
 
     private func stepEndCoordinate(_ step: MKRoute.Step) -> CLLocationCoordinate2D {
-        let pointCount = step.polyline.pointCount
-        guard pointCount > 0 else { return step.polyline.coordinate }
+        let coordinates = polylineCoordinates(step.polyline)
+        return coordinates.last ?? step.polyline.coordinate
+    }
+
+    /// Extrage lista de coordonate dintr-un MKPolyline. MapKit nu oferă
+    /// direct un array de coordonate — punctele stau într-un buffer C
+    /// intern (`getCoordinates(_:range:)`), pe care îl copiem într-un
+    /// array Swift obișnuit, mult mai ușor de folosit în restul codului.
+    private func polylineCoordinates(_ polyline: MKPolyline) -> [CLLocationCoordinate2D] {
+        let pointCount = polyline.pointCount
+        guard pointCount > 0 else { return [] }
 
         var coordinates = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: pointCount)
-        step.polyline.getCoordinates(&coordinates, range: NSRange(location: 0, length: pointCount))
-        return coordinates.last ?? step.polyline.coordinate
+        polyline.getCoordinates(&coordinates, range: NSRange(location: 0, length: pointCount))
+        return coordinates
+    }
+
+    // MARK: - Recalculare rută la abatere
+
+    /// Verifică dacă poziția curentă e prea departe de traseul desenat pe
+    /// hartă și, dacă da, pornește o recalculare a rutei de la poziția
+    /// actuală către aceeași destinație.
+    private func recalculateRouteIfOffTrack(currentLocation: CLLocation) {
+        guard !isRecalculatingRoute, let destination = currentDestination else { return }
+        guard let distanceFromRoute = distanceToRoute(from: currentLocation) else { return }
+
+        // Prag de abatere: sub 50m considerăm că utilizatorul e încă "pe
+        // drum" (GPS-ul oricum are o marjă de eroare de câțiva metri).
+        // Peste 50m — a ratat un viraj, a luat-o pe altă stradă etc. — și
+        // are sens o rută nouă, calculată de unde se află acum.
+        let offRouteThreshold: CLLocationDistance = 50
+        guard distanceFromRoute > offRouteThreshold else { return }
+
+        isRecalculatingRoute = true
+        voiceGuide.speak("Recalculăm ruta.")
+
+        routeService.calculateRoute(from: currentCoordinate, to: destination.placemark.coordinate) { [weak self] result in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                self.isRecalculatingRoute = false
+                switch result {
+                case .success(let route):
+                    // showRoute înlocuiește complet starea de navigare
+                    // (routeSteps, routeCoordinates, currentStepIndex) cu
+                    // cele ale rutei noi și reia anunțurile vocale de la
+                    // prima ei etapă.
+                    self.showRoute(route, destination: destination)
+                case .failure(let error):
+                    self.presentError(error)
+                }
+            }
+        }
+    }
+
+    /// Distanța minimă (în metri) de la o poziție dată până la traseul
+    /// curent, calculată segment cu segment din polilinia rutei.
+    private func distanceToRoute(from location: CLLocation) -> CLLocationDistance? {
+        guard routeCoordinates.count > 1 else { return nil }
+
+        let point = MKMapPoint(location.coordinate)
+        var minimumDistance = CLLocationDistance.greatestFiniteMagnitude
+
+        for index in 0..<(routeCoordinates.count - 1) {
+            let segmentStart = MKMapPoint(routeCoordinates[index])
+            let segmentEnd = MKMapPoint(routeCoordinates[index + 1])
+            let distance = distance(from: point, toSegmentBetween: segmentStart, and: segmentEnd)
+            minimumDistance = min(minimumDistance, distance)
+        }
+
+        return minimumDistance
+    }
+
+    /// Distanța de la un punct la cel mai apropiat loc de pe un segment
+    /// de dreaptă (nu doar la capetele lui). Standard: proiectăm punctul
+    /// pe dreapta suport a segmentului, apoi limităm proiecția să rămână
+    /// între cele două capete (`t` clampat între 0 și 1) — altfel am putea
+    /// "proiecta" în afara segmentului, spre o zonă a drumului pe care
+    /// utilizatorul de fapt nu se află lângă ea.
+    private func distance(from point: MKMapPoint, toSegmentBetween start: MKMapPoint, and end: MKMapPoint) -> CLLocationDistance {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let lengthSquared = dx * dx + dy * dy
+
+        guard lengthSquared > 0 else {
+            return MKMetersBetweenMapPoints(point, start)
+        }
+
+        let t = max(0, min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared))
+        let projected = MKMapPoint(x: start.x + t * dx, y: start.y + t * dy)
+        return MKMetersBetweenMapPoints(point, projected)
     }
 
     private func formattedDistance(_ meters: CLLocationDistance) -> String {
@@ -383,7 +482,18 @@ extension ViewController: CLLocationManagerDelegate {
             // urmărește continuu poziția utilizatorului, plus o verificare
             // a progresului față de următorul viraj.
             centerMap(on: currentCoordinate, latLongDelta: 0.003)
-            checkProgressAlongRoute(currentLocation: location)
+
+            // Verificăm întâi dacă utilizatorul s-a abătut de la traseu.
+            // Dacă da, se pornește o recalculare (asincronă) și sărim
+            // peste verificarea de progres pentru actualizarea asta — nu
+            // are sens să anunțăm "apropiere de viraj" pe o rută care
+            // oricum urmează să fie înlocuită.
+            if !isRecalculatingRoute {
+                recalculateRouteIfOffTrack(currentLocation: location)
+            }
+            if !isRecalculatingRoute {
+                checkProgressAlongRoute(currentLocation: location)
+            }
         } else {
             // În afara navigării, comportamentul rămâne cel de dinainte:
             // o singură citire de poziție ca să plasăm utilizatorul pe
