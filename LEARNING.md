@@ -447,3 +447,34 @@ actualizează continuu, pe măsură ce utilizatorul înaintează.
    `.durationText`, exact aceleași proprietăți cu `didSet` folosite deja
    pentru afișarea inițială — nu a fost nevoie de nicio schimbare în
    `UIRouteInfoPanel`.
+
+## 14. Unități de măsură și aspect hartă (zi/noapte)
+
+A cincea funcționalitate: un ecran mic de preferințe, cu două opțiuni
+persistente — sistemul de unități (metric sau imperial) și aspectul
+hărții (zi sau noapte).
+
+**Fișiere noi:**
+
+1. `UserPreferences.swift` — un singleton mic, peste `UserDefaults`,
+   care reține cele două preferințe. Singur fișier din proiect unde
+   folosim un singleton (`static let shared`) în loc de o instanță creată
+   în `ViewController` și pasată mai departe, pentru că preferințele
+   trebuie citite din mai multe ecrane independente (harta principală,
+   ecranul de setări) fără să ținem noi minte manual cine deține
+   instanța.
+2. `SettingsViewController.swift` — ecran modal cu două
+   `UISegmentedControl`, la fel de simplu ca `FavoritesListViewController`.
+
+**Cum se leagă de restul aplicației:**
+- `formattedDistance(_:)` citește `UserPreferences.shared.unitSystem` și
+  setează `MKDistanceFormatter.units` corespunzător — MapKit face toată
+  conversia și formatarea, noi doar alegem sistemul.
+- `applyMapAppearance()` setează `mapView.overrideUserInterfaceStyle` pe
+  `.dark` sau `.light`; MapKit redesenează automat toate culorile hărții
+  (drumuri, clădiri, etichete) pentru varianta aleasă, fără cod
+  suplimentar de desenare.
+- La schimbarea unei preferințe, `SettingsViewControllerDelegate` anunță
+  `ViewController`, care reaplică aspectul hărții și, dacă o rută e deja
+  afișată, recalculează imediat textul de distanță/durată cu noua
+  unitate — altfel ar rămâne cu valoarea veche până la următoarea mișcare.

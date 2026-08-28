@@ -94,6 +94,15 @@ class ViewController: UIViewController {
         return btn
     }()
 
+    private let btnSettings: UIButton = {
+        let btn = UIButton(type: .system)
+        btn.setImage(UIImage(systemName: "gearshape.fill"), for: .normal)
+        btn.backgroundColor = .white.withAlphaComponent(0.9)
+        btn.layer.cornerRadius = 8
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        return btn
+    }()
+
     // This is a "closure-based property initializer": the `{ ... }()` right
     // after the type is a closure that runs ONCE, immediately, to compute
     // the initial value. It's a common Swift pattern for configuring a view
@@ -139,10 +148,16 @@ class ViewController: UIViewController {
         mapView.delegate = self
         locationManager.delegate = self
 
-        mapView.addSubviews(searchBar, coordinatePanel, routeInfoPanel, btnFavorites)
+        mapView.addSubviews(searchBar, coordinatePanel, routeInfoPanel, btnFavorites, btnSettings)
         routeInfoPanel.isHidden = true
 
         btnFavorites.addTarget(self, action: #selector(favoritesButtonTapped), for: .touchUpInside)
+        btnSettings.addTarget(self, action: #selector(settingsButtonTapped), for: .touchUpInside)
+
+        // Aplicăm de la pornire aspectul de hartă salvat anterior (zi sau
+        // noapte) — altfel, la fiecare relansare a aplicației, harta ar
+        // reveni implicit la modul zi, ignorând alegerea utilizatorului.
+        applyMapAppearance()
 
         applyConstraints()
     }
@@ -153,16 +168,35 @@ class ViewController: UIViewController {
         present(UINavigationController(rootViewController: listController), animated: true)
     }
 
+    @objc private func settingsButtonTapped() {
+        let settingsController = SettingsViewController()
+        settingsController.delegate = self
+        present(UINavigationController(rootViewController: settingsController), animated: true)
+    }
+
+    /// Setează stilul de interfață forțat pe MKMapView, care face ca
+    /// MapKit să-și redeseneze automat toate culorile hărții (drumuri,
+    /// clădiri, etichete) în varianta închisă la culoare, potrivită
+    /// pentru condus noaptea — fără să fi fost nevoie să desenăm noi
+    /// vreo culoare manual.
+    private func applyMapAppearance() {
+        mapView.overrideUserInterfaceStyle = UserPreferences.shared.mapAppearance == .night ? .dark : .light
+    }
+
     private func applyConstraints() {
         searchBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8).isActive = true
-        searchBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -80).isActive = true
+        searchBar.trailingAnchor.constraint(equalTo: btnSettings.leadingAnchor, constant: -4).isActive = true
         searchBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor).isActive = true
 
-        btnFavorites.leadingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: 4).isActive = true
         btnFavorites.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8).isActive = true
         btnFavorites.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor).isActive = true
         btnFavorites.widthAnchor.constraint(equalToConstant: 44).isActive = true
         btnFavorites.heightAnchor.constraint(equalToConstant: 36).isActive = true
+
+        btnSettings.trailingAnchor.constraint(equalTo: btnFavorites.leadingAnchor, constant: -4).isActive = true
+        btnSettings.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor).isActive = true
+        btnSettings.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        btnSettings.heightAnchor.constraint(equalToConstant: 36).isActive = true
 
         coordinatePanel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor).isActive = true
         coordinatePanel.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 4).isActive = true
@@ -479,6 +513,10 @@ class ViewController: UIViewController {
     private func formattedDistance(_ meters: CLLocationDistance) -> String {
         let formatter = MKDistanceFormatter()
         formatter.unitStyle = .abbreviated
+        // Formatter-ul MapKit știe deja să convertească și să afișeze
+        // corect metri/kilometri sau picioare/mile — noi îi spunem doar
+        // care sistem să folosească, pe baza preferinței salvate.
+        formatter.units = UserPreferences.shared.unitSystem == .imperial ? .imperial : .metric
         return formatter.string(fromDistance: meters)
     }
 
@@ -613,6 +651,23 @@ extension ViewController: FavoritesListViewControllerDelegate {
         mapItem.name = favorite.name
 
         drawRoute(to: mapItem)
+    }
+}
+
+// MARK: - SettingsViewControllerDelegate
+
+extension ViewController: SettingsViewControllerDelegate {
+    func settingsDidChange(_ controller: SettingsViewController) {
+        applyMapAppearance()
+
+        // Dacă o rută e deja afișată, distanța/durata arătate pe panou
+        // trebuie recalculate imediat cu noua unitate de măsură — altfel
+        // ar rămâne în unitatea veche până la următoarea actualizare de
+        // poziție (sau chiar deloc, dacă utilizatorul nu se mai mișcă).
+        if let route = currentRoute {
+            routeInfoPanel.distanceText = formattedDistance(route.distance)
+            routeInfoPanel.durationText = "≈ " + formattedDuration(route.expectedTravelTime)
+        }
     }
 }
 
