@@ -69,6 +69,22 @@ class ViewController: UIViewController {
     private var currentStepIndex = 0
     private var isNavigating = false
 
+    // Serviciul de favorite (SwiftData) și destinația curent afișată pe
+    // hartă — reținută separat de `currentRoute`, ca să știm ce nume și
+    // ce coordonate să salvăm atunci când utilizatorul apasă pe steaua
+    // din UIRouteInfoPanel.
+    private let favoritesService = FavoritesService()
+    private var currentDestination: MKMapItem?
+
+    private let btnFavorites: UIButton = {
+        let btn = UIButton(type: .system)
+        btn.setImage(UIImage(systemName: "star.fill"), for: .normal)
+        btn.backgroundColor = .white.withAlphaComponent(0.9)
+        btn.layer.cornerRadius = 8
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        return btn
+    }()
+
     // This is a "closure-based property initializer": the `{ ... }()` right
     // after the type is a closure that runs ONCE, immediately, to compute
     // the initial value. It's a common Swift pattern for configuring a view
@@ -114,16 +130,30 @@ class ViewController: UIViewController {
         mapView.delegate = self
         locationManager.delegate = self
 
-        mapView.addSubviews(searchBar, coordinatePanel, routeInfoPanel)
+        mapView.addSubviews(searchBar, coordinatePanel, routeInfoPanel, btnFavorites)
         routeInfoPanel.isHidden = true
+
+        btnFavorites.addTarget(self, action: #selector(favoritesButtonTapped), for: .touchUpInside)
 
         applyConstraints()
     }
 
+    @objc private func favoritesButtonTapped() {
+        let listController = FavoritesListViewController(favoritesService: favoritesService)
+        listController.delegate = self
+        present(UINavigationController(rootViewController: listController), animated: true)
+    }
+
     private func applyConstraints() {
         searchBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8).isActive = true
-        searchBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8).isActive = true
+        searchBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -80).isActive = true
         searchBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor).isActive = true
+
+        btnFavorites.leadingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: 4).isActive = true
+        btnFavorites.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8).isActive = true
+        btnFavorites.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor).isActive = true
+        btnFavorites.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        btnFavorites.heightAnchor.constraint(equalToConstant: 36).isActive = true
 
         coordinatePanel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor).isActive = true
         coordinatePanel.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 4).isActive = true
@@ -182,6 +212,7 @@ class ViewController: UIViewController {
         clearRoute(keepAnnotations: false)
 
         currentRoute = route
+        currentDestination = destination
         mapView.addOverlay(route.polyline, level: .aboveRoads)
 
         let pin = MKPointAnnotation()
@@ -230,6 +261,7 @@ class ViewController: UIViewController {
         isNavigating = false
         routeSteps = []
         currentStepIndex = 0
+        currentDestination = nil
     }
 
     // MARK: - Ghidare vocală
@@ -393,6 +425,36 @@ extension ViewController: UICoordinatePanelDelegate {
 extension ViewController: UIRouteInfoPanelDelegate {
     func routeInfoPanelClearButtonTapped(_ sender: Any?) {
         clearRoute(keepAnnotations: false)
+    }
+
+    func routeInfoPanelSaveButtonTapped(_ sender: Any?) {
+        guard let destination = currentDestination else { return }
+
+        let name = destination.name ?? "Destinație salvată"
+        favoritesService.save(name: name, coordinate: destination.placemark.coordinate)
+
+        let alert = UIAlertController(
+            title: "Salvat",
+            message: "\"\(name)\" a fost adăugat la favorite.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
+}
+
+// MARK: - FavoritesListViewControllerDelegate
+
+extension ViewController: FavoritesListViewControllerDelegate {
+    func favoritesList(_ controller: FavoritesListViewController, didSelect favorite: FavoriteDestination) {
+        // Reconstruim un MKMapItem din coordonatele salvate, ca să putem
+        // refolosi exact același drum (drawRoute) folosit și pentru
+        // rezultatele venite din căutare.
+        let placemark = MKPlacemark(coordinate: favorite.coordinate)
+        let mapItem = MKMapItem(placemark: placemark)
+        mapItem.name = favorite.name
+
+        drawRoute(to: mapItem)
     }
 }
 

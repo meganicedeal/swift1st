@@ -20,12 +20,14 @@ import UIKit
 
 protocol UIRouteInfoPanelDelegate {
     func routeInfoPanelClearButtonTapped(_ sender: Any?)
+    func routeInfoPanelSaveButtonTapped(_ sender: Any?)
 }
 
 extension UIRouteInfoPanelDelegate {
     // Default no-op implementation, same pattern as UICoordinatePanelDelegate,
     // so conforming types only need to implement what they care about.
     func routeInfoPanelClearButtonTapped(_ sender: Any?) {}
+    func routeInfoPanelSaveButtonTapped(_ sender: Any?) {}
 }
 
 class UIRouteInfoPanel: UIView {
@@ -54,6 +56,16 @@ class UIRouteInfoPanel: UIView {
         return btn
     }()
 
+    // Buton pentru salvarea destinației curente ca favorită. Folosește
+    // simbolul de stea (SF Symbols) în loc de text, ca să încapă comod
+    // lângă butonul "Clear" fără să aglomereze panelul.
+    private var btnSave: UIButton = {
+        let btn = UIButton(type: .system)
+        btn.setImage(UIImage(systemName: "star"), for: .normal)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        return btn
+    }()
+
     public var distanceText: String = "--" {
         didSet { lblDistance.text = distanceText }
     }
@@ -77,14 +89,19 @@ class UIRouteInfoPanel: UIView {
         layer.cornerRadius = 14
         clipsToBounds = true
 
-        addSubviews(lblDistance, lblDuration, btnClear)
+        addSubviews(lblDistance, lblDuration, btnClear, btnSave)
         btnClear.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
+        btnSave.addTarget(self, action: #selector(saveTapped), for: .touchUpInside)
 
         applyConstraints()
     }
 
     @objc private func clearTapped() {
         delegate?.routeInfoPanelClearButtonTapped(self)
+    }
+
+    @objc private func saveTapped() {
+        delegate?.routeInfoPanelSaveButtonTapped(self)
     }
 
     private func applyConstraints() {
@@ -97,5 +114,8 @@ class UIRouteInfoPanel: UIView {
 
         btnClear.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16).isActive = true
         btnClear.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
+
+        btnSave.trailingAnchor.constraint(equalTo: btnClear.leadingAnchor, constant: -16).isActive = true
+        btnSave.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
     }
 }

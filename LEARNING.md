@@ -370,3 +370,29 @@ navigație.
 Aceeași separare de responsabilități ca la `RouteService`: logica de
 "vorbit" stă izolată în `VoiceGuide`, iar `ViewController` decide doar
 *când* să apeleze `voiceGuide.speak(...)`.
+
+## 11. Destinații favorite (SwiftData)
+
+A doua funcționalitate adăugată: salvarea destinațiilor favorite, folosind
+**SwiftData** (framework-ul de persistență introdus de Apple în iOS 17).
+Din acest motiv, target-ul minim al proiectului a fost ridicat de la
+iOS 15.2 la **iOS 17.0** — SwiftData nu există pe versiuni mai vechi.
+
+**Fișiere noi:**
+
+1. `FavoriteDestination.swift` — modelul de date (`@Model`): nume,
+   coordonate, dată adăugare.
+2. `FavoritesService.swift` — wrapper peste `ModelContainer`/`ModelContext`,
+   cu operații simple: `save`, `fetchAll`, `delete`. Aceeași idee ca
+   `RouteService`: ViewController-ul nu știe nimic despre SwiftData, doar
+   apelează metodele astea trei.
+3. `FavoritesListViewController.swift` — un `UITableViewController` simplu,
+   prezentat modal, care listează favoritele, permite ștergerea prin swipe
+   și selectarea uneia pentru a calcula ruta către ea.
+
+**Cum se leagă de restul aplicației:**
+- Steaua din `UIRouteInfoPanel` salvează destinația curent afișată.
+- Steaua din bara de sus deschide lista de favorite; selectarea uneia
+  reconstruiește un `MKMapItem` din coordonatele salvate și reutilizează
+  `drawRoute(to:)` — exact fluxul folosit deja pentru rezultatele din
+  căutare.
