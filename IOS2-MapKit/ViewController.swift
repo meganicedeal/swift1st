@@ -19,7 +19,7 @@
 //  - Optionals (`?`, `!`, `guard let`)         -> mapView, locationManager callbacks
 //  - The Delegate pattern (protocols)          -> "extension ViewController: ..." blocks
 //  - Extensions to organize conformances      -> one `extension` per protocol
-//  - Closures & @escaping completion handlers -> drawRoute(to:), searchBarSearchButtonClicked
+//  - Closures & @escaping completion handlers -> addWaypoint(_:), searchBarSearchButtonClicked
 //  - [weak self] to avoid retain cycles       -> inside every closure below
 //  - DispatchQueue.main.async                 -> jumping back to the main/UI thread
 //
@@ -47,12 +47,20 @@ class ViewController: UIViewController {
     private let routeService = RouteService()
 
     // `var` because these DO get reassigned as the user moves / searches.
-    // `currentRoute: MKRoute?` is an Optional — it means "either an MKRoute
-    // value, or nil". There's no route until the user searches for one, so
-    // modeling it as optional (rather than some fake placeholder route)
-    // makes illegal states unrepresentable.
     private var currentCoordinate = CLLocationCoordinate2D()
-    private var currentRoute: MKRoute?
+
+    // Rută cu mai multe opriri: `waypoints` reține, în ordine, fiecare
+    // oprire adăugată (căutare sau favorit selectat); `currentLegs` reține
+    // câte un MKRoute pentru fiecare "etapă" între două opriri consecutive
+    // (poziția curentă -> prima oprire -> a doua oprire -> ...). MapKit nu
+    // oferă un singur request cu mai multe puncte de trecere — de-asta
+    // avem nevoie de o rută separată, calculată, pentru fiecare etapă.
+    // `legStepCounts` reține câte instrucțiuni vocale are fiecare etapă,
+    // ca să putem determina, dintr-un `currentStepIndex` unic, cărei
+    // opriri îi aparține pasul curent — vezi currentLegIndex(forStepIndex:).
+    private var waypoints: [MKMapItem] = []
+    private var currentLegs: [MKRoute] = []
+    private var legStepCounts: [Int] = []
 
     private let coordinatePanel = UICoordinatePanel()
     private let routeInfoPanel = UIRouteInfoPanel()
@@ -71,17 +79,18 @@ class ViewController: UIViewController {
 
     // Coordonatele complete ale rutei curente (nu doar etapele), folosite
     // ca să detectăm dacă utilizatorul s-a abătut de la drum — vezi
-    // isOffRoute(_:) mai jos. `isRecalculatingRoute` previne trimiterea
-    // mai multor cereri de recalculare simultan, cât timp una e deja în
+    // distanceToRoute(from:) mai jos. `isCalculatingRoute` previne
+    // trimiterea mai multor cereri de rută simultan (fie la adăugarea
+    // unei opriri noi, fie la recalculare), cât timp una e deja în
     // desfășurare (MKDirections e asincron, iar poziția se actualizează
     // des în timpul navigării).
     private var routeCoordinates: [CLLocationCoordinate2D] = []
-    private var isRecalculatingRoute = false
+    private var isCalculatingRoute = false
 
     // Serviciul de favorite (SwiftData) și destinația curent afișată pe
-    // hartă — reținută separat de `currentRoute`, ca să știm ce nume și
-    // ce coordonate să salvăm atunci când utilizatorul apasă pe steaua
-    // din UIRouteInfoPanel.
+    // hartă — ultima oprire din `waypoints`, reținută separat ca să știm
+    // ce nume și ce coordonate să salvăm/previzualizăm (Look Around)
+    // atunci când utilizatorul apasă butoanele din UIRouteInfoPanel.
     private let favoritesService = FavoritesService()
     private var currentDestination: MKMapItem?
 
@@ -221,7 +230,7 @@ class ViewController: UIViewController {
         mapView.setRegion(MKCoordinateRegion(center: coordinate, span: span), animated: true)
     }
 
-    // MARK: - Route drawing
+    // MARK: - Rută cu mai multe opriri
 
     // `{ [weak self] result in ... }` is a CLOSURE — an anonymous chunk of
     // code passed as a value, the same way you'd pass a number or a string.
@@ -234,8 +243,60 @@ class ViewController: UIViewController {
     // (ViewController keeps routeService's closure alive, closure keeps
     // ViewController alive, neither is ever freed). `guard let self = self`
     // then safely unwraps that weak reference for the rest of the closure.
-    private func drawRoute(to destination: MKMapItem) {
-        routeService.calculateRoute(from: currentCoordinate, to: destination.placemark.coordinate) { [weak self] result in
+
+    /// Adaugă o nouă oprire la sfârșitul traseului curent și recalculează
+    /// întregul drum (poziția curentă → prima oprire → ... → cea nouă).
+    /// Dacă nu exista nicio oprire înainte, comportamentul e identic cu
+    /// vechiul "calculează o rută simplă către o singură destinație" —
+    /// rutele cu o singură oprire sunt doar cazul particular, cu un
+    /// singur element, al rutelor cu mai multe opriri.
+    private func addWaypoint(_ destination: MKMapItem) {
+        guard !isCalculatingRoute else { return }
+
+        waypoints.append(destination)
+        isCalculatingRoute = true
+
+        calculateLegs(for: waypoints) { [weak self] result in
+            guard let self = self else { return }
+            self.isCalculatingRoute = false
+
+            switch result {
+            case .success(let legs):
+                self.showMultiStopRoute(legs)
+            case .failure(let error):
+                // Nu păstrăm o oprire pentru care nu s-a putut calcula
+                // nicio rută — altfel utilizatorul ar rămâne cu o oprire
+                // "fantomă", nedesenată nicăieri pe hartă.
+                self.waypoints.removeLast()
+                self.presentError(error)
+            }
+        }
+    }
+
+    /// Calculează, în ordine, câte o rută (MKRoute) pentru fiecare etapă
+    /// dintre opririle date: poziția curentă → waypoints[0], apoi
+    /// waypoints[0] → waypoints[1], și tot așa. MKDirections calculează o
+    /// singură etapă pe cerere, așa că funcția se apelează recursiv pe
+    /// ea însăși, o etapă pe rând, adunând rezultatele în `accumulated`,
+    /// până când toate etapele sunt gata — moment în care apelează
+    /// `completion` o singură dată, cu toate rutele, în ordine.
+    private func calculateLegs(
+        for waypoints: [MKMapItem],
+        originIndex: Int = 0,
+        accumulated: [MKRoute] = [],
+        completion: @escaping (Result<[MKRoute], Error>) -> Void
+    ) {
+        guard originIndex < waypoints.count else {
+            completion(.success(accumulated))
+            return
+        }
+
+        let origin = originIndex == 0
+            ? currentCoordinate
+            : waypoints[originIndex - 1].placemark.coordinate
+        let destination = waypoints[originIndex].placemark.coordinate
+
+        routeService.calculateRoute(from: origin, to: destination) { [weak self] result in
             guard let self = self else { return }
             // Network/location callbacks can land on a background thread.
             // ALL UIKit calls (updating labels, adding map overlays, etc.)
@@ -243,49 +304,70 @@ class ViewController: UIViewController {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let route):
-                    self.showRoute(route, destination: destination)
+                    self.calculateLegs(
+                        for: waypoints,
+                        originIndex: originIndex + 1,
+                        accumulated: accumulated + [route],
+                        completion: completion
+                    )
                 case .failure(let error):
-                    self.presentError(error)
+                    completion(.failure(error))
                 }
             }
         }
     }
 
-    private func showRoute(_ route: MKRoute, destination: MKMapItem) {
-        clearRoute(keepAnnotations: false)
+    /// Desenează pe hartă întregul traseu cu mai multe opriri și pornește
+    /// (sau reia) navigarea. `legs` trebuie să corespundă, în ordine, cu
+    /// `waypoints` curent — un MKRoute pentru fiecare etapă.
+    private func showMultiStopRoute(_ legs: [MKRoute]) {
+        clearRoute(keepAnnotations: false, keepWaypoints: true)
 
-        currentRoute = route
-        currentDestination = destination
-        mapView.addOverlay(route.polyline, level: .aboveRoads)
+        currentLegs = legs
+        currentDestination = waypoints.last
 
-        let pin = MKPointAnnotation()
-        pin.coordinate = destination.placemark.coordinate
-        pin.title = destination.name ?? "Destination"
-        mapView.addAnnotation(pin)
+        for leg in legs {
+            mapView.addOverlay(leg.polyline, level: .aboveRoads)
+        }
 
-        mapView.setVisibleMapRect(
-            route.polyline.boundingMapRect,
-            edgePadding: UIEdgeInsets(top: 100, left: 40, bottom: 140, right: 40),
-            animated: true
-        )
+        for (index, waypoint) in waypoints.enumerated() {
+            let pin = MKPointAnnotation()
+            pin.coordinate = waypoint.placemark.coordinate
+            let isFinalStop = index == waypoints.count - 1
+            pin.title = waypoint.name ?? (isFinalStop ? "Destinație" : "Oprire \(index + 1)")
+            mapView.addAnnotation(pin)
+        }
 
-        routeInfoPanel.distanceText = formattedDistance(route.distance)
-        routeInfoPanel.durationText = "≈ " + formattedDuration(route.expectedTravelTime)
+        if let combinedRect = boundingMapRect(of: legs) {
+            mapView.setVisibleMapRect(
+                combinedRect,
+                edgePadding: UIEdgeInsets(top: 100, left: 40, bottom: 140, right: 40),
+                animated: true
+            )
+        }
+
+        let totalDistance = legs.reduce(0) { $0 + $1.distance }
+        let totalDuration = legs.reduce(0) { $0 + $1.expectedTravelTime }
+        routeInfoPanel.distanceText = formattedDistance(totalDistance)
+        routeInfoPanel.durationText = "≈ " + formattedDuration(totalDuration)
         routeInfoPanel.isHidden = false
 
-        // `route.steps` este un array ordonat de MKRoute.Step, câte unul
-        // pentru fiecare manevră (ex. "Virează dreapta pe Str.
-        // Republicii"). Unele etape (de obicei prima, "Start") au un
-        // `instructions` gol și există doar ca să marcheze punctul de
-        // plecare, așa că le filtrăm înainte să le dăm ghidului vocal.
-        routeSteps = route.steps.filter { !$0.instructions.isEmpty }
+        // Fiecare etapă își aduce propriile instrucțiuni (route.steps);
+        // le concatenăm într-o singură listă unică, în ordinea în care
+        // trebuie parcurse. `legStepCounts` reține câte instrucțiuni are
+        // fiecare etapă, ca să putem afla mai târziu (currentLegIndex)
+        // cărei opriri îi aparține un anumit pas din lista combinată.
+        let stepsByLeg = legs.map { leg in leg.steps.filter { !$0.instructions.isEmpty } }
+        routeSteps = stepsByLeg.flatMap { $0 }
+        legStepCounts = stepsByLeg.map { $0.count }
         currentStepIndex = 0
         isNavigating = true
 
-        // Reținem întregul traseu ca listă de coordonate (nu doar etapele
-        // pentru voce), ca să putem verifica ulterior cât de departe s-a
-        // abătut utilizatorul de la drumul desenat pe hartă.
-        routeCoordinates = polylineCoordinates(route.polyline)
+        // La fel, coordonatele tuturor etapelor se concatenează într-o
+        // singură listă — pentru detectarea abaterii de la traseu nu
+        // contează unde se termină o etapă și începe alta, doar traseul
+        // complet, ca întreg.
+        routeCoordinates = legs.flatMap { polylineCoordinates($0.polyline) }
 
         // E posibil ca actualizările continue de poziție să fi fost deja
         // oprite după prima citire (vezi didUpdateLocations mai jos); din
@@ -296,11 +378,23 @@ class ViewController: UIViewController {
         announceCurrentStep()
     }
 
-    private func clearRoute(keepAnnotations: Bool = true) {
-        if let route = currentRoute {
-            mapView.removeOverlay(route.polyline)
-            currentRoute = nil
+    /// Dreptunghiul (în coordonate de hartă) care încadrează toate
+    /// etapele rutei, folosit ca să centrăm harta pe întregul traseu,
+    /// indiferent de câte opriri are.
+    private func boundingMapRect(of legs: [MKRoute]) -> MKMapRect? {
+        legs.map { $0.polyline.boundingMapRect }
+            .reduce(nil) { result, rect in
+                guard let result = result else { return rect }
+                return result.union(rect)
+            }
+    }
+
+    private func clearRoute(keepAnnotations: Bool = true, keepWaypoints: Bool = false) {
+        for leg in currentLegs {
+            mapView.removeOverlay(leg.polyline)
         }
+        currentLegs = []
+
         if !keepAnnotations {
             mapView.removeAnnotations(mapView.annotations)
         }
@@ -308,17 +402,24 @@ class ViewController: UIViewController {
 
         isNavigating = false
         routeSteps = []
+        legStepCounts = []
         currentStepIndex = 0
         currentDestination = nil
         routeCoordinates = []
+
+        if !keepWaypoints {
+            waypoints = []
+        }
     }
 
     // MARK: - Ghidare vocală
 
     /// Rostește instrucțiunea pentru etapa spre care ne îndreptăm acum.
-    /// Dacă o etapă ajunge totuși cu un `instructions` gol (nu ar trebui,
-    /// după filtrarea de mai sus, dar verificarea costă puțin), trecem
-    /// direct la următoarea în loc să "rostim" o tăcere.
+    /// Dacă pasul curent e chiar primul dintr-o etapă nouă (adică tocmai
+    /// am ajuns la o oprire intermediară), anunțăm întâi sosirea la acea
+    /// oprire — într-un singur mesaj vocal, nu două separate, ca să nu se
+    /// suprapună (vezi `speak(_:)` în VoiceGuide.swift, care oricum ar
+    /// întrerupe mesajul anterior).
     private func announceCurrentStep() {
         guard currentStepIndex < routeSteps.count else { return }
 
@@ -327,7 +428,13 @@ class ViewController: UIViewController {
             advanceToNextStep()
             return
         }
-        voiceGuide.speak(instruction)
+
+        if isLegBoundary(currentStepIndex) {
+            let stopNumber = currentLegIndex(forStepIndex: currentStepIndex)
+            voiceGuide.speak("Ați ajuns la oprirea \(stopNumber). \(instruction)")
+        } else {
+            voiceGuide.speak(instruction)
+        }
     }
 
     /// Trece la etapa următoare sau, dacă toate etapele au fost parcurse,
@@ -388,13 +495,44 @@ class ViewController: UIViewController {
         return coordinates
     }
 
+    /// Indexul etapei (0 = poziția curentă → prima oprire, 1 = prima
+    /// oprire → a doua etc.) căreia îi aparține un anumit pas din lista
+    /// combinată `routeSteps`. Funcționează numărând câte instrucțiuni
+    /// are fiecare etapă (`legStepCounts`) și văzând unde cade `stepIndex`
+    /// în acea numărătoare cumulativă.
+    private func currentLegIndex(forStepIndex stepIndex: Int) -> Int {
+        var cumulative = 0
+        for (index, count) in legStepCounts.enumerated() {
+            cumulative += count
+            if stepIndex < cumulative { return index }
+        }
+        return max(legStepCounts.count - 1, 0)
+    }
+
+    /// Adevărat dacă `stepIndex` este chiar primul pas al unei etape noi
+    /// (adică utilizatorul tocmai a ajuns la o oprire intermediară).
+    /// Ultima etapă e exclusă deliberat: ajungerea la finalul ei înseamnă
+    /// sosirea la destinația finală, tratată separat în
+    /// `advanceToNextStep`, nu ca o "oprire intermediară".
+    private func isLegBoundary(_ stepIndex: Int) -> Bool {
+        guard legStepCounts.count > 1 else { return false }
+
+        var cumulative = 0
+        for count in legStepCounts.dropLast() {
+            cumulative += count
+            if stepIndex == cumulative { return true }
+        }
+        return false
+    }
+
     // MARK: - Recalculare rută la abatere
 
     /// Verifică dacă poziția curentă e prea departe de traseul desenat pe
-    /// hartă și, dacă da, pornește o recalculare a rutei de la poziția
-    /// actuală către aceeași destinație.
+    /// hartă și, dacă da, pornește o recalculare a rutei rămase — de la
+    /// poziția actuală, prin toate opririle nevizitate încă (cea spre
+    /// care ne îndreptam, plus cele de după ea).
     private func recalculateRouteIfOffTrack(currentLocation: CLLocation) {
-        guard !isRecalculatingRoute, let destination = currentDestination else { return }
+        guard !isCalculatingRoute, !waypoints.isEmpty else { return }
         guard let distanceFromRoute = distanceToRoute(from: currentLocation) else { return }
 
         // Prag de abatere: sub 50m considerăm că utilizatorul e încă "pe
@@ -404,23 +542,28 @@ class ViewController: UIViewController {
         let offRouteThreshold: CLLocationDistance = 50
         guard distanceFromRoute > offRouteThreshold else { return }
 
-        isRecalculatingRoute = true
+        isCalculatingRoute = true
         voiceGuide.speak("Recalculăm ruta.")
 
-        routeService.calculateRoute(from: currentCoordinate, to: destination.placemark.coordinate) { [weak self] result in
+        // Opririle deja vizitate rămân în urmă — recalculăm doar de la
+        // oprirea spre care ne îndreptam în momentul abaterii, încolo.
+        let legIndex = currentLegIndex(forStepIndex: currentStepIndex)
+        let remainingWaypoints = Array(waypoints[legIndex...])
+
+        calculateLegs(for: remainingWaypoints) { [weak self] result in
             guard let self = self else { return }
-            DispatchQueue.main.async {
-                self.isRecalculatingRoute = false
-                switch result {
-                case .success(let route):
-                    // showRoute înlocuiește complet starea de navigare
-                    // (routeSteps, routeCoordinates, currentStepIndex) cu
-                    // cele ale rutei noi și reia anunțurile vocale de la
-                    // prima ei etapă.
-                    self.showRoute(route, destination: destination)
-                case .failure(let error):
-                    self.presentError(error)
-                }
+            self.isCalculatingRoute = false
+
+            switch result {
+            case .success(let legs):
+                // showMultiStopRoute înlocuiește complet starea de
+                // navigare (routeSteps, routeCoordinates, legStepCounts,
+                // currentStepIndex) cu cele ale rutei noi și reia
+                // anunțurile vocale de la prima ei etapă.
+                self.waypoints = remainingWaypoints
+                self.showMultiStopRoute(legs)
+            case .failure(let error):
+                self.presentError(error)
             }
         }
     }
@@ -499,15 +642,18 @@ class ViewController: UIViewController {
     /// bună sursă când e disponibilă. Dar GPS-ul are nevoie de câteva
     /// citiri consecutive ca să o poată estima corect, iar până atunci
     /// întoarce o valoare negativă (de obicei -1) ca semnal "nu știu
-    /// încă". În acel caz, ne întoarcem la viteza medie a rutei
-    /// originale (distanța totală / timpul estimat de MapKit) — mai puțin
-    /// precisă, dar mereu disponibilă.
+    /// încă". În acel caz, ne întoarcem la viteza medie a întregului
+    /// traseu (suma distanțelor tuturor etapelor / suma duratelor lor
+    /// estimate de MapKit) — mai puțin precisă, dar mereu disponibilă.
     private func currentSpeed(currentLocation: CLLocation) -> Double {
         if currentLocation.speed > 0.5 {
             return currentLocation.speed
         }
-        guard let route = currentRoute, route.expectedTravelTime > 0 else { return 0 }
-        return route.distance / route.expectedTravelTime
+
+        let totalDistance = currentLegs.reduce(0) { $0 + $1.distance }
+        let totalDuration = currentLegs.reduce(0) { $0 + $1.expectedTravelTime }
+        guard totalDuration > 0 else { return 0 }
+        return totalDistance / totalDuration
     }
 
     private func formattedDistance(_ meters: CLLocationDistance) -> String {
@@ -622,10 +768,10 @@ extension ViewController: CLLocationManagerDelegate {
             // peste verificarea de progres pentru actualizarea asta — nu
             // are sens să anunțăm "apropiere de viraj" pe o rută care
             // oricum urmează să fie înlocuită.
-            if !isRecalculatingRoute {
+            if !isCalculatingRoute {
                 recalculateRouteIfOffTrack(currentLocation: location)
             }
-            if !isRecalculatingRoute {
+            if !isCalculatingRoute {
                 checkProgressAlongRoute(currentLocation: location)
                 updateLiveProgress(currentLocation: location)
             }
@@ -669,7 +815,7 @@ extension ViewController: UICoordinatePanelDelegate {
 
 extension ViewController: UIRouteInfoPanelDelegate {
     func routeInfoPanelClearButtonTapped(_ sender: Any?) {
-        clearRoute(keepAnnotations: false)
+        clearRoute(keepAnnotations: false, keepWaypoints: false)
     }
 
     func routeInfoPanelSaveButtonTapped(_ sender: Any?) {
@@ -698,13 +844,13 @@ extension ViewController: UIRouteInfoPanelDelegate {
 extension ViewController: FavoritesListViewControllerDelegate {
     func favoritesList(_ controller: FavoritesListViewController, didSelect favorite: FavoriteDestination) {
         // Reconstruim un MKMapItem din coordonatele salvate, ca să putem
-        // refolosi exact același drum (drawRoute) folosit și pentru
-        // rezultatele venite din căutare.
+        // adăuga favoritul ca oprire nouă, exact ca un rezultat venit din
+        // căutare.
         let placemark = MKPlacemark(coordinate: favorite.coordinate)
         let mapItem = MKMapItem(placemark: placemark)
         mapItem.name = favorite.name
 
-        drawRoute(to: mapItem)
+        addWaypoint(mapItem)
     }
 }
 
@@ -718,10 +864,12 @@ extension ViewController: SettingsViewControllerDelegate {
         // trebuie recalculate imediat cu noua unitate de măsură — altfel
         // ar rămâne în unitatea veche până la următoarea actualizare de
         // poziție (sau chiar deloc, dacă utilizatorul nu se mai mișcă).
-        if let route = currentRoute {
-            routeInfoPanel.distanceText = formattedDistance(route.distance)
-            routeInfoPanel.durationText = "≈ " + formattedDuration(route.expectedTravelTime)
-        }
+        guard !currentLegs.isEmpty else { return }
+
+        let totalDistance = currentLegs.reduce(0) { $0 + $1.distance }
+        let totalDuration = currentLegs.reduce(0) { $0 + $1.expectedTravelTime }
+        routeInfoPanel.distanceText = formattedDistance(totalDistance)
+        routeInfoPanel.durationText = "≈ " + formattedDuration(totalDuration)
     }
 }
 
@@ -744,7 +892,10 @@ extension ViewController: UISearchBarDelegate {
                 switch result {
                 case .success(let items):
                     guard let destination = items.first else { return }
-                    self.drawRoute(to: destination)
+                    // Fiecare căutare adaugă o oprire nouă la traseu, nu
+                    // înlocuiește ruta existentă — așa se construiește o
+                    // rută cu mai multe opriri, o căutare pe rând.
+                    self.addWaypoint(destination)
                 case .failure(let error):
                     self.presentError(error)
                 }

@@ -505,3 +505,54 @@ special pentru că rămâne complet în targetul principal al aplicației —
 nu necesită un target nou de extensie (cum ar fi cerut un widget sau un
 Live Activity) și nici o aprobare specială de la Apple (cum ar cere
 CarPlay).
+
+## 16. Rută cu mai multe opriri
+
+A șaptea funcționalitate — și cea mai amplă refactorizare de până acum:
+aplicația poate acum construi o rută cu mai multe opriri, adăugate una
+câte una (fiecare căutare sau favorit selectat devine o oprire nouă, nu
+mai înlocuiește ruta existentă).
+
+**De ce a fost nevoie de un refactor, nu doar de cod adăugat:**
+
+MKDirections (API-ul MapKit pentru rute) calculează o singură etapă pe
+cerere — un punct de plecare și o singură destinație. Nu există un
+echivalent "trece prin aceste puncte, în ordine" într-un singur request,
+așa cum oferă alte API-uri de hărți. Pentru o rută cu mai multe opriri,
+trebuie deci calculate mai multe etape separate (poziția curentă →
+oprirea 1, oprirea 1 → oprirea 2 etc.) și combinate manual.
+
+**Cum funcționează:**
+
+1. `waypoints: [MKMapItem]` reține, în ordine, toate opririle adăugate.
+   `addWaypoint(_:)` adaugă o oprire nouă la coadă și recalculează
+   întregul traseu.
+2. `calculateLegs(for:originIndex:accumulated:completion:)` calculează
+   etapele una câte una, recursiv: cere o rută pentru etapa curentă, iar
+   când răspunsul vine, se cheamă din nou pe sine pentru etapa
+   următoare, până când toate sunt gata — moment în care `completion`
+   primește toate rutele, în ordine, într-un singur `Result`.
+3. `showMultiStopRoute(_:)` desenează toate etapele pe hartă (un overlay
+   per etapă), pune un pin pentru fiecare oprire ("Oprire 1", "Oprire 2",
+   ..., "Destinație" pentru ultima), și — esențial — **concatenează**
+   instrucțiunile și coordonatele tuturor etapelor într-o singură listă
+   (`routeSteps`, `routeCoordinates`). Datorită acestei concatenări,
+   toată infrastructura construită la funcționalitățile anterioare
+   (ghidare vocală, recalculare la abatere, ETA/distanță live) a
+   funcționat mai departe **fără nicio modificare** — nu "știe" și nu-i
+   pasă că traseul are mai multe etape, doar parcurge o listă de pași.
+4. Singura adaptare reală a fost la ghidarea vocală: `legStepCounts`
+   reține câte instrucțiuni are fiecare etapă, ca să putem determina
+   (`currentLegIndex`, `isLegBoundary`) când utilizatorul tocmai a ajuns
+   la o oprire intermediară și să anunțăm asta ("Ați ajuns la oprirea
+   N.") înainte de următoarea instrucțiune.
+5. Recalcularea la abatere (funcționalitatea 12) a fost și ea adaptată:
+   la o abatere, se recalculează doar opririle **nevizitate încă** (cea
+   spre care se îndrepta utilizatorul, plus cele de după ea) — nu se
+   reia întregul traseu de la primele opriri, deja parcurse.
+
+**Ce s-a păstrat neschimbat, ca dovadă că separarea pe fișiere a meritat
+efortul:** `RouteService` (calculează în continuare o singură etapă,
+fără să știe nimic despre opriri multiple), `VoiceGuide`,
+`FavoritesService`, `UserPreferences` — niciunul dintre ele nu a trebuit
+atins pentru acest refactor.
